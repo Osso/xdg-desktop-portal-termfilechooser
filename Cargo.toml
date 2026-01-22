@@ -1,0 +1,19 @@
+[package]
+name = "xdg-desktop-portal-termfilechooser"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "xdg-desktop-portal-termfilechooser"
+path = "src/main.rs"
+
+[dependencies]
+zbus = "5"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+percent-encoding = "2"
+tempfile = "3"

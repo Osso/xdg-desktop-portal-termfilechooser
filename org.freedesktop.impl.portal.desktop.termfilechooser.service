@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.termfilechooser
+Exec=/usr/bin/xdg-desktop-portal-termfilechooser
