@@ -100,6 +100,10 @@ fn get_bytes_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<
     })
 }
 
+fn get_string_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
+    options.get(key).and_then(|v| String::try_from(v.clone()).ok())
+}
+
 struct FileChooser {
     config: Config,
 }
@@ -109,96 +113,89 @@ impl FileChooser {
         Self { config }
     }
 
+    fn build_chooser_args(&self, out_path: &str, directory: bool, save: bool, start: &str) -> Vec<String> {
+        let mut args: Vec<String> = self.config.filechooser.chooser.split_whitespace().map(String::from).collect();
+        let last = args.pop().unwrap_or_default();
+        args.push(format!("{}={}", last, out_path));
+        if directory || save {
+            args.push(format!("--cwd-file={}.dir", out_path));
+        }
+        args.push(start.to_string());
+        args
+    }
+
+    fn spawn_terminal(&self, title: &str, chooser_args: &[String]) -> Result<(), String> {
+        let mut term_parts: Vec<String> = self.config.filechooser.terminal.split_whitespace().map(String::from).collect();
+        let term_cmd = term_parts.remove(0);
+        let title = title.to_string();
+        let chooser_args = chooser_args.to_vec();
+
+        // Run in a separate thread to avoid tokio reactor panics from zbus's async context
+        std::thread::spawn(move || {
+            let mut cmd = Command::new(&term_cmd);
+            cmd.args(&term_parts).arg(&title).arg("--").arg(&chooser_args[0]).args(&chooser_args[1..]);
+            debug!("Running: {:?}", cmd);
+            let status = cmd.status().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+            if !status.success() {
+                return Err(format!("Terminal exited with: {}", status));
+            }
+            Ok(())
+        })
+        .join()
+        .map_err(|_| "Terminal thread panicked".to_string())?
+    }
+
+    fn read_selections(
+        &self,
+        out_path: &str,
+        save: bool,
+        suggested_name: Option<&str>,
+        start: &str,
+    ) -> Vec<String> {
+        let content = std::fs::read_to_string(out_path).unwrap_or_default();
+        let dir_path = format!("{}.dir", out_path);
+        let dir_content = std::fs::read_to_string(&dir_path).ok();
+        let _ = std::fs::remove_file(&dir_path);
+        if !content.trim().is_empty() {
+            return content.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+        }
+        if save {
+            let dir = dir_content.as_deref()
+                .and_then(|dc| dc.lines().next())
+                .map(String::from)
+                .unwrap_or_else(|| start.to_string());
+
+            if let Some(name) = suggested_name {
+                return vec![PathBuf::from(dir).join(name).to_string_lossy().into_owned()];
+            }
+        }
+        dir_content
+            .map(|dc| dc.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+            .unwrap_or_default()
+    }
+
     fn run_chooser(
         &self,
         title: &str,
         start_path: Option<&str>,
-        _save: bool,
+        save: bool,
         directory: bool,
         _multiple: bool,
+        suggested_name: Option<&str>,
     ) -> Result<Vec<String>, String> {
         let tmp = tempfile::NamedTempFile::new()
             .map_err(|e| format!("Failed to create temp file: {}", e))?;
         let out_path = tmp.path().to_string_lossy().to_string();
-
         let start = start_path.unwrap_or(&self.config.filechooser.default_dir);
-
-        // Build chooser command: "yazi --chooser-file" -> ["yazi", "--chooser-file=/tmp/xxx"]
-        let mut chooser_args: Vec<String> = self
-            .config
-            .filechooser
-            .chooser
-            .split_whitespace()
-            .map(String::from)
-            .collect();
-
-        let last_arg = chooser_args.pop().unwrap_or_default();
-        chooser_args.push(format!("{}={}", last_arg, out_path));
-
-        if directory {
-            chooser_args.push(format!("--cwd-file={}.dir", out_path));
-        }
-        chooser_args.push(start.to_string());
-
-        // Build terminal command
-        let mut term_parts: Vec<&str> = self.config.filechooser.terminal.split_whitespace().collect();
-        let term_cmd = term_parts.remove(0);
-
-        let mut cmd = Command::new(term_cmd);
-        cmd.args(&term_parts);
-        cmd.arg(title);
-        cmd.arg("--");
-        cmd.arg(&chooser_args[0]);
-        cmd.args(&chooser_args[1..]);
-
-        debug!("Running: {:?}", cmd);
-
-        let status = cmd
-            .status()
-            .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
-
-        if !status.success() {
-            return Err(format!("Terminal exited with: {}", status));
-        }
-
-        // Read selections
-        let content = std::fs::read_to_string(&out_path).unwrap_or_default();
-
-        // Handle directory selection fallback
-        let dir_path = format!("{}.dir", out_path);
-        let dir_content = std::fs::read_to_string(&dir_path).ok();
-        let _ = std::fs::remove_file(&dir_path);
-
-        let selections: Vec<String> = if content.trim().is_empty() {
-            if let Some(dc) = dir_content {
-                dc.lines()
-                    .filter(|l| !l.is_empty())
-                    .map(String::from)
-                    .collect()
-            } else {
-                vec![]
-            }
-        } else {
-            content
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(String::from)
-                .collect()
-        };
-
+        let chooser_args = self.build_chooser_args(&out_path, directory, save, start);
+        self.spawn_terminal(title, &chooser_args)?;
+        let selections = self.read_selections(&out_path, save, suggested_name, start);
         if selections.is_empty() {
             return Err("No files selected".into());
         }
-
-        // Convert to file:// URIs
-        let uris: Vec<String> = selections
-            .into_iter()
-            .map(|path| {
-                let encoded = utf8_percent_encode(&path, PATH_ENCODE_SET).to_string();
-                format!("file://{}", encoded)
-            })
+        let uris = selections.into_iter()
+            .map(|path| format!("file://{}", utf8_percent_encode(&path, PATH_ENCODE_SET)))
             .collect();
-
         Ok(uris)
     }
 }
@@ -229,7 +226,7 @@ impl FileChooser {
         let directory = get_bool_option(&options, "directory");
         let current_folder = get_bytes_option(&options, "current_folder");
 
-        match self.run_chooser(title, current_folder.as_deref(), false, directory, multiple) {
+        match self.run_chooser(title, current_folder.as_deref(), false, directory, multiple, None) {
             Ok(uris) => {
                 info!("Selected {} file(s)", uris.len());
                 (0, build_uris_result(uris))
@@ -254,8 +251,16 @@ impl FileChooser {
         debug!("Options: {:?}", options);
 
         let current_folder = get_bytes_option(&options, "current_folder");
+        let current_name = get_string_option(&options, "current_name");
 
-        match self.run_chooser(title, current_folder.as_deref(), true, false, false) {
+        match self.run_chooser(
+            title,
+            current_folder.as_deref(),
+            true,
+            false,
+            false,
+            current_name.as_deref(),
+        ) {
             Ok(uris) => {
                 info!("Save location: {:?}", uris);
                 (0, build_uris_result(uris))
