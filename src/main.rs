@@ -104,6 +104,18 @@ fn get_string_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option
     options.get(key).and_then(|v| String::try_from(v.clone()).ok())
 }
 
+fn file_name_from_path(path: &str) -> Option<String> {
+    PathBuf::from(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
+fn parent_dir_from_path(path: &str) -> Option<String> {
+    PathBuf::from(path)
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+}
+
 struct FileChooser {
     config: Config,
 }
@@ -150,6 +162,7 @@ impl FileChooser {
         out_path: &str,
         save: bool,
         suggested_name: Option<&str>,
+        current_file: Option<&str>,
         start: &str,
     ) -> Vec<String> {
         let content = std::fs::read_to_string(out_path).unwrap_or_default();
@@ -165,7 +178,11 @@ impl FileChooser {
                 .map(String::from)
                 .unwrap_or_else(|| start.to_string());
 
-            if let Some(name) = suggested_name {
+            let name = suggested_name
+                .map(String::from)
+                .or_else(|| current_file.and_then(file_name_from_path));
+
+            if let Some(name) = name {
                 return vec![PathBuf::from(dir).join(name).to_string_lossy().into_owned()];
             }
         }
@@ -182,14 +199,18 @@ impl FileChooser {
         directory: bool,
         _multiple: bool,
         suggested_name: Option<&str>,
+        current_file: Option<&str>,
     ) -> Result<Vec<String>, String> {
         let tmp = tempfile::NamedTempFile::new()
             .map_err(|e| format!("Failed to create temp file: {}", e))?;
         let out_path = tmp.path().to_string_lossy().to_string();
-        let start = start_path.unwrap_or(&self.config.filechooser.default_dir);
+        let derived_start = current_file.and_then(parent_dir_from_path);
+        let start = start_path
+            .or(derived_start.as_deref())
+            .unwrap_or(&self.config.filechooser.default_dir);
         let chooser_args = self.build_chooser_args(&out_path, directory, save, start);
         self.spawn_terminal(title, &chooser_args)?;
-        let selections = self.read_selections(&out_path, save, suggested_name, start);
+        let selections = self.read_selections(&out_path, save, suggested_name, current_file, start);
         if selections.is_empty() {
             return Err("No files selected".into());
         }
@@ -206,6 +227,49 @@ fn build_uris_result(uris: Vec<String>) -> HashMap<String, OwnedValue> {
     let array: zbus::zvariant::Array = uris.into();
     results.insert("uris".to_string(), Value::Array(array).try_into().unwrap());
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> Config {
+        Config::default()
+    }
+
+    #[test]
+    fn save_falls_back_to_current_file_when_no_new_selection_is_written() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+
+        let selections = chooser.read_selections(
+            &tmp.path().to_string_lossy(),
+            true,
+            None,
+            Some("/home/osso/Downloads/example.txt"),
+            "/home/osso/Downloads",
+        );
+
+        assert_eq!(selections, vec!["/home/osso/Downloads/example.txt"]);
+    }
+
+    #[test]
+    fn save_uses_selected_directory_with_current_file_basename() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let dir_path = format!("{}.dir", tmp.path().display());
+        std::fs::write(&dir_path, "/home/osso/Documents\n").unwrap();
+
+        let selections = chooser.read_selections(
+            &tmp.path().to_string_lossy(),
+            true,
+            None,
+            Some("/home/osso/Downloads/example.txt"),
+            "/home/osso/Downloads",
+        );
+
+        assert_eq!(selections, vec!["/home/osso/Documents/example.txt"]);
+    }
 }
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
@@ -226,7 +290,7 @@ impl FileChooser {
         let directory = get_bool_option(&options, "directory");
         let current_folder = get_bytes_option(&options, "current_folder");
 
-        match self.run_chooser(title, current_folder.as_deref(), false, directory, multiple, None) {
+        match self.run_chooser(title, current_folder.as_deref(), false, directory, multiple, None, None) {
             Ok(uris) => {
                 info!("Selected {} file(s)", uris.len());
                 (0, build_uris_result(uris))
@@ -252,6 +316,7 @@ impl FileChooser {
 
         let current_folder = get_bytes_option(&options, "current_folder");
         let current_name = get_string_option(&options, "current_name");
+        let current_file = get_bytes_option(&options, "current_file");
 
         match self.run_chooser(
             title,
@@ -260,6 +325,7 @@ impl FileChooser {
             false,
             false,
             current_name.as_deref(),
+            current_file.as_deref(),
         ) {
             Ok(uris) => {
                 info!("Save location: {:?}", uris);
