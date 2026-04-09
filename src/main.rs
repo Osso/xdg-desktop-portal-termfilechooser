@@ -1,5 +1,5 @@
 use clap::Parser;
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use std::collections::HashMap;
 
 /// Characters to encode in file URIs (everything except unreserved + /)
@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
 use zbus::object_server::SignalEmitter;
-use zbus::{connection, interface};
 use zbus::zvariant::{OwnedValue, Value};
+use zbus::{connection, interface};
 
 #[derive(Parser)]
 #[command(name = "xdg-desktop-portal-termfilechooser")]
@@ -86,9 +86,10 @@ impl Default for Config {
 }
 
 fn get_bool_option(options: &HashMap<String, OwnedValue>, key: &str) -> bool {
-    options.get(key).and_then(|v| {
-        bool::try_from(v.clone()).ok()
-    }).unwrap_or(false)
+    options
+        .get(key)
+        .and_then(|v| bool::try_from(v.clone()).ok())
+        .unwrap_or(false)
 }
 
 fn get_bytes_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
@@ -101,7 +102,9 @@ fn get_bytes_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<
 }
 
 fn get_string_option(options: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
-    options.get(key).and_then(|v| String::try_from(v.clone()).ok())
+    options
+        .get(key)
+        .and_then(|v| String::try_from(v.clone()).ok())
 }
 
 fn file_name_from_path(path: &str) -> Option<String> {
@@ -125,8 +128,20 @@ impl FileChooser {
         Self { config }
     }
 
-    fn build_chooser_args(&self, out_path: &str, directory: bool, save: bool, start: &str) -> Vec<String> {
-        let mut args: Vec<String> = self.config.filechooser.chooser.split_whitespace().map(String::from).collect();
+    fn build_chooser_args(
+        &self,
+        out_path: &str,
+        directory: bool,
+        save: bool,
+        start: &str,
+    ) -> Vec<String> {
+        let mut args: Vec<String> = self
+            .config
+            .filechooser
+            .chooser
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         let last = args.pop().unwrap_or_default();
         args.push(format!("{}={}", last, out_path));
         if directory || save {
@@ -137,7 +152,13 @@ impl FileChooser {
     }
 
     fn spawn_terminal(&self, title: &str, chooser_args: &[String]) -> Result<(), String> {
-        let mut term_parts: Vec<String> = self.config.filechooser.terminal.split_whitespace().map(String::from).collect();
+        let mut term_parts: Vec<String> = self
+            .config
+            .filechooser
+            .terminal
+            .split_whitespace()
+            .map(String::from)
+            .collect();
         let term_cmd = term_parts.remove(0);
         let title = title.to_string();
         let chooser_args = chooser_args.to_vec();
@@ -145,9 +166,15 @@ impl FileChooser {
         // Run in a separate thread to avoid tokio reactor panics from zbus's async context
         std::thread::spawn(move || {
             let mut cmd = Command::new(&term_cmd);
-            cmd.args(&term_parts).arg(&title).arg("--").arg(&chooser_args[0]).args(&chooser_args[1..]);
+            cmd.args(&term_parts)
+                .arg(&title)
+                .arg("--")
+                .arg(&chooser_args[0])
+                .args(&chooser_args[1..]);
             debug!("Running: {:?}", cmd);
-            let status = cmd.status().map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+            let status = cmd
+                .status()
+                .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
             if !status.success() {
                 return Err(format!("Terminal exited with: {}", status));
             }
@@ -170,10 +197,15 @@ impl FileChooser {
         let dir_content = std::fs::read_to_string(&dir_path).ok();
         let _ = std::fs::remove_file(&dir_path);
         if !content.trim().is_empty() {
-            return content.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+            return content
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect();
         }
         if save {
-            let dir = dir_content.as_deref()
+            let dir = dir_content
+                .as_deref()
                 .and_then(|dc| dc.lines().next())
                 .map(String::from)
                 .unwrap_or_else(|| start.to_string());
@@ -187,7 +219,12 @@ impl FileChooser {
             }
         }
         dir_content
-            .map(|dc| dc.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+            .map(|dc| {
+                dc.lines()
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -214,7 +251,8 @@ impl FileChooser {
         if selections.is_empty() {
             return Err("No files selected".into());
         }
-        let uris = selections.into_iter()
+        let uris = selections
+            .into_iter()
             .map(|path| format!("file://{}", utf8_percent_encode(&path, PATH_ENCODE_SET)))
             .collect();
         Ok(uris)
@@ -283,14 +321,25 @@ impl FileChooser {
         title: &str,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
-        info!("OpenFile: handle={}, app_id={}, title={}", handle, app_id, title);
+        info!(
+            "OpenFile: handle={}, app_id={}, title={}",
+            handle, app_id, title
+        );
         debug!("Options: {:?}", options);
 
         let multiple = get_bool_option(&options, "multiple");
         let directory = get_bool_option(&options, "directory");
         let current_folder = get_bytes_option(&options, "current_folder");
 
-        match self.run_chooser(title, current_folder.as_deref(), false, directory, multiple, None, None) {
+        match self.run_chooser(
+            title,
+            current_folder.as_deref(),
+            false,
+            directory,
+            multiple,
+            None,
+            None,
+        ) {
             Ok(uris) => {
                 info!("Selected {} file(s)", uris.len());
                 (0, build_uris_result(uris))
@@ -311,7 +360,10 @@ impl FileChooser {
         title: &str,
         options: HashMap<String, OwnedValue>,
     ) -> (u32, HashMap<String, OwnedValue>) {
-        info!("SaveFile: handle={}, app_id={}, title={}", handle, app_id, title);
+        info!(
+            "SaveFile: handle={}, app_id={}, title={}",
+            handle, app_id, title
+        );
         debug!("Options: {:?}", options);
 
         let current_folder = get_bytes_option(&options, "current_folder");
@@ -344,23 +396,36 @@ fn load_config(path: Option<PathBuf>) -> Config {
         dirs::config_dir().map(|d| d.join("xdg-desktop-portal-termfilechooser/config.toml"))
     });
 
-    if let Some(path) = config_path {
-        if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => match toml::from_str(&content) {
-                    Ok(config) => {
-                        info!("Loaded config from {:?}", path);
-                        return config;
-                    }
-                    Err(e) => warn!("Failed to parse config: {}", e),
-                },
-                Err(e) => warn!("Failed to read config: {}", e),
-            }
-        }
+    let Some(path) = config_path else {
+        info!("Using default config");
+        return Config::default();
+    };
+
+    if !path.exists() {
+        info!("Using default config");
+        return Config::default();
     }
 
-    info!("Using default config");
-    Config::default()
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to read config: {}", e);
+            info!("Using default config");
+            return Config::default();
+        }
+    };
+
+    match toml::from_str(&content) {
+        Ok(config) => {
+            info!("Loaded config from {:?}", path);
+            config
+        }
+        Err(e) => {
+            warn!("Failed to parse config: {}", e);
+            info!("Using default config");
+            Config::default()
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
