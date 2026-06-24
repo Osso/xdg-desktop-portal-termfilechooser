@@ -275,6 +275,229 @@ mod tests {
         Config::default()
     }
 
+    fn owned_value(value: Value<'_>) -> OwnedValue {
+        value.try_into().unwrap()
+    }
+
+    #[test]
+    fn defaults_have_terminal_chooser_and_home_fallback() {
+        let config = Config::default();
+
+        assert_eq!(
+            config.filechooser.terminal,
+            "kitty --class file-chooser --title"
+        );
+        assert_eq!(config.filechooser.chooser, "yazi --chooser-file");
+        assert!(!config.filechooser.default_dir.is_empty());
+    }
+
+    #[test]
+    fn option_helpers_decode_bool_string_and_nul_terminated_bytes() {
+        let mut options = HashMap::new();
+        options.insert("multiple".into(), owned_value(Value::Bool(true)));
+        options.insert(
+            "current_name".into(),
+            owned_value(Value::Str("report.txt".into())),
+        );
+        options.insert(
+            "current_folder".into(),
+            owned_value(Value::Array(vec![b'/', b't', b'm', b'p', b'\0'].into())),
+        );
+
+        assert!(get_bool_option(&options, "multiple"));
+        assert!(!get_bool_option(&options, "missing"));
+        assert_eq!(
+            get_string_option(&options, "current_name"),
+            Some("report.txt".into())
+        );
+        assert_eq!(
+            get_bytes_option(&options, "current_folder"),
+            Some("/tmp".into())
+        );
+    }
+
+    #[test]
+    fn path_helpers_extract_basename_and_parent() {
+        assert_eq!(
+            file_name_from_path("/home/osso/Downloads/example.txt"),
+            Some("example.txt".into())
+        );
+        assert_eq!(
+            parent_dir_from_path("/home/osso/Downloads/example.txt"),
+            Some("/home/osso/Downloads".into())
+        );
+        assert_eq!(file_name_from_path("/"), None);
+    }
+
+    #[test]
+    fn chooser_args_insert_output_file_and_directory_sidecar() {
+        let chooser = FileChooser::new(test_config());
+
+        assert_eq!(
+            chooser.build_chooser_args("/tmp/selection", false, false, "/home/osso"),
+            vec!["yazi", "--chooser-file=/tmp/selection", "/home/osso"]
+        );
+        assert_eq!(
+            chooser.build_chooser_args("/tmp/selection", true, false, "/home/osso"),
+            vec![
+                "yazi",
+                "--chooser-file=/tmp/selection",
+                "--cwd-file=/tmp/selection.dir",
+                "/home/osso"
+            ]
+        );
+        assert_eq!(
+            chooser.build_chooser_args("/tmp/selection", false, true, "/home/osso"),
+            vec![
+                "yazi",
+                "--chooser-file=/tmp/selection",
+                "--cwd-file=/tmp/selection.dir",
+                "/home/osso"
+            ]
+        );
+    }
+
+    #[test]
+    fn spawn_terminal_reports_success_and_failure_status() {
+        let mut config = test_config();
+        config.filechooser.terminal = "true".into();
+        let chooser = FileChooser::new(config);
+
+        assert!(
+            chooser
+                .spawn_terminal("ignored", &["true".into(), "ignored".into()])
+                .is_ok()
+        );
+
+        let mut config = test_config();
+        config.filechooser.terminal = "false".into();
+        let chooser = FileChooser::new(config);
+        let error = chooser
+            .spawn_terminal("ignored", &["true".into(), "ignored".into()])
+            .unwrap_err();
+
+        assert!(error.starts_with("Terminal exited with:"));
+    }
+
+    #[test]
+    fn read_selections_prefers_explicit_output_paths() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "/tmp/a.txt\n\n/tmp/b.txt\n").unwrap();
+
+        let selections = chooser.read_selections(
+            &tmp.path().to_string_lossy(),
+            false,
+            None,
+            None,
+            "/home/osso",
+        );
+
+        assert_eq!(selections, vec!["/tmp/a.txt", "/tmp/b.txt"]);
+    }
+
+    #[test]
+    fn read_selections_can_return_selected_directories() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let dir_path = format!("{}.dir", tmp.path().display());
+        std::fs::write(&dir_path, "/home/osso/Documents\n/home/osso/Pictures\n").unwrap();
+
+        let selections = chooser.read_selections(
+            &tmp.path().to_string_lossy(),
+            false,
+            None,
+            None,
+            "/home/osso",
+        );
+
+        assert_eq!(
+            selections,
+            vec!["/home/osso/Documents", "/home/osso/Pictures"]
+        );
+        assert!(!std::path::Path::new(&dir_path).exists());
+    }
+
+    #[test]
+    fn save_uses_suggested_name_before_current_file_basename() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+
+        let selections = chooser.read_selections(
+            &tmp.path().to_string_lossy(),
+            true,
+            Some("renamed.txt"),
+            Some("/home/osso/Downloads/example.txt"),
+            "/home/osso/Downloads",
+        );
+
+        assert_eq!(selections, vec!["/home/osso/Downloads/renamed.txt"]);
+    }
+
+    #[test]
+    fn run_chooser_returns_error_when_terminal_writes_no_selection() {
+        let mut config = test_config();
+        config.filechooser.terminal = "true".into();
+        let chooser = FileChooser::new(config);
+
+        let error = chooser
+            .run_chooser(
+                "ignored",
+                Some("/home/osso/Downloads"),
+                false,
+                false,
+                false,
+                None,
+                None,
+            )
+            .unwrap_err();
+
+        assert_eq!(error, "No files selected");
+    }
+
+    #[test]
+    fn build_uris_result_contains_string_array() {
+        let result = build_uris_result(vec![
+            "file:///tmp/a.txt".into(),
+            "file:///tmp/file%20with%20space.txt".into(),
+        ]);
+        let uris = result.get("uris").unwrap().try_clone().unwrap();
+        let uris = Vec::<String>::try_from(uris).unwrap();
+
+        assert_eq!(
+            uris,
+            vec!["file:///tmp/a.txt", "file:///tmp/file%20with%20space.txt"]
+        );
+    }
+
+    #[test]
+    fn load_config_reads_toml_and_falls_back_for_missing_or_invalid_files() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+                [filechooser]
+                terminal = "foot --title"
+                chooser = "ranger --choosefile"
+                default_dir = "/tmp"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config(Some(tmp.path().to_path_buf()));
+
+        assert_eq!(config.filechooser.terminal, "foot --title");
+        assert_eq!(config.filechooser.chooser, "ranger --choosefile");
+        assert_eq!(config.filechooser.default_dir, "/tmp");
+
+        let missing = load_config(Some(tmp.path().with_extension("missing")));
+        assert_eq!(missing.filechooser.chooser, default_chooser());
+
+        std::fs::write(tmp.path(), "[filechooser").unwrap();
+        let invalid = load_config(Some(tmp.path().to_path_buf()));
+        assert_eq!(invalid.filechooser.chooser, default_chooser());
+    }
+
     #[test]
     fn save_falls_back_to_current_file_when_no_new_selection_is_written() {
         let chooser = FileChooser::new(test_config());
