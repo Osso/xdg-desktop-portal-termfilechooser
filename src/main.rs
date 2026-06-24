@@ -16,9 +16,11 @@ const PATH_ENCODE_SET: &AsciiSet = &CONTROLS
 use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, info, warn};
-use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{OwnedValue, Value};
-use zbus::{connection, interface};
+
+mod config;
+mod runtime;
+use config::*;
 
 #[derive(Parser)]
 #[command(name = "xdg-desktop-portal-termfilechooser")]
@@ -35,54 +37,6 @@ struct Args {
     /// Config file path
     #[arg(short, long)]
     config: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Config {
-    #[serde(default)]
-    filechooser: FileChooserConfig,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct FileChooserConfig {
-    #[serde(default = "default_terminal")]
-    terminal: String,
-    #[serde(default = "default_chooser")]
-    chooser: String,
-    #[serde(default = "default_dir")]
-    default_dir: String,
-}
-
-fn default_terminal() -> String {
-    "kitty --class file-chooser --title".into()
-}
-
-fn default_chooser() -> String {
-    "yazi --chooser-file".into()
-}
-
-fn default_dir() -> String {
-    dirs::home_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".into())
-}
-
-impl Default for FileChooserConfig {
-    fn default() -> Self {
-        Self {
-            terminal: default_terminal(),
-            chooser: default_chooser(),
-            default_dir: default_dir(),
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            filechooser: FileChooserConfig::default(),
-        }
-    }
 }
 
 fn get_bool_option(options: &HashMap<String, OwnedValue>, key: &str) -> bool {
@@ -257,6 +211,64 @@ impl FileChooser {
             .collect();
         Ok(uris)
     }
+
+    fn open_file_result(
+        &self,
+        title: &str,
+        options: HashMap<String, OwnedValue>,
+    ) -> (u32, HashMap<String, OwnedValue>) {
+        let multiple = get_bool_option(&options, "multiple");
+        let directory = get_bool_option(&options, "directory");
+        let current_folder = get_bytes_option(&options, "current_folder");
+
+        match self.run_chooser(
+            title,
+            current_folder.as_deref(),
+            false,
+            directory,
+            multiple,
+            None,
+            None,
+        ) {
+            Ok(uris) => {
+                info!("Selected {} file(s)", uris.len());
+                (0, build_uris_result(uris))
+            }
+            Err(e) => {
+                warn!("OpenFile cancelled or failed: {}", e);
+                (1, HashMap::new())
+            }
+        }
+    }
+
+    fn save_file_result(
+        &self,
+        title: &str,
+        options: HashMap<String, OwnedValue>,
+    ) -> (u32, HashMap<String, OwnedValue>) {
+        let current_folder = get_bytes_option(&options, "current_folder");
+        let current_name = get_string_option(&options, "current_name");
+        let current_file = get_bytes_option(&options, "current_file");
+
+        match self.run_chooser(
+            title,
+            current_folder.as_deref(),
+            true,
+            false,
+            false,
+            current_name.as_deref(),
+            current_file.as_deref(),
+        ) {
+            Ok(uris) => {
+                info!("Save location: {:?}", uris);
+                (0, build_uris_result(uris))
+            }
+            Err(e) => {
+                warn!("SaveFile cancelled or failed: {}", e);
+                (1, HashMap::new())
+            }
+        }
+    }
 }
 
 fn build_uris_result(uris: Vec<String>) -> HashMap<String, OwnedValue> {
@@ -270,6 +282,7 @@ fn build_uris_result(uris: Vec<String>) -> HashMap<String, OwnedValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn test_config() -> Config {
         Config::default()
@@ -277,6 +290,16 @@ mod tests {
 
     fn owned_value(value: Value<'_>) -> OwnedValue {
         value.try_into().unwrap()
+    }
+
+    fn executable_script(name: &str, body: &str) -> PathBuf {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        path
     }
 
     #[test]
@@ -314,6 +337,13 @@ mod tests {
             get_bytes_option(&options, "current_folder"),
             Some("/tmp".into())
         );
+
+        options.insert("not_bool".into(), owned_value(Value::Str("true".into())));
+        options.insert("not_string".into(), owned_value(Value::Bool(true)));
+        options.insert("not_bytes".into(), owned_value(Value::Str("/tmp".into())));
+        assert!(!get_bool_option(&options, "not_bool"));
+        assert_eq!(get_string_option(&options, "not_string"), None);
+        assert_eq!(get_bytes_option(&options, "not_bytes"), None);
     }
 
     #[test]
@@ -377,6 +407,14 @@ mod tests {
             .unwrap_err();
 
         assert!(error.starts_with("Terminal exited with:"));
+
+        let mut config = test_config();
+        config.filechooser.terminal = "/definitely/not/a/terminal".into();
+        let chooser = FileChooser::new(config);
+        let error = chooser
+            .spawn_terminal("ignored", &["true".into(), "ignored".into()])
+            .unwrap_err();
+        assert!(error.starts_with("Failed to spawn terminal:"));
     }
 
     #[test]
@@ -456,6 +494,129 @@ mod tests {
     }
 
     #[test]
+    fn run_chooser_returns_encoded_file_uris_from_terminal_selection() {
+        let terminal = executable_script(
+            "terminal",
+            r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --chooser-file=*) out="${arg#--chooser-file=}" ;;
+    esac
+done
+printf '/tmp/space name #1.txt\n' > "$out"
+"#,
+        );
+        let mut config = test_config();
+        config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+        config.filechooser.chooser = "chooser --chooser-file".into();
+        let chooser = FileChooser::new(config);
+
+        let selections = chooser
+            .run_chooser("Open", None, false, false, false, None, None)
+            .unwrap();
+
+        assert_eq!(selections, vec!["file:///tmp/space%20name%20%231.txt"]);
+    }
+
+    #[test]
+    fn run_chooser_derives_start_from_current_file_when_folder_missing() {
+        let terminal = executable_script(
+            "terminal",
+            r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --cwd-file=*) cwd="${arg#--cwd-file=}" ;;
+    esac
+done
+printf '/home/osso/Documents\n' > "$cwd"
+"#,
+        );
+        let mut config = test_config();
+        config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+        config.filechooser.chooser = "chooser --chooser-file".into();
+        let chooser = FileChooser::new(config);
+
+        let selections = chooser
+            .run_chooser(
+                "Save",
+                None,
+                true,
+                false,
+                false,
+                None,
+                Some("/home/osso/Downloads/report.txt"),
+            )
+            .unwrap();
+
+        assert_eq!(selections, vec!["file:///home/osso/Documents/report.txt"]);
+    }
+
+    #[test]
+    fn open_file_result_returns_uris_or_cancel_code() {
+        let terminal = executable_script(
+            "terminal",
+            r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --chooser-file=*) out="${arg#--chooser-file=}" ;;
+    esac
+done
+printf '/tmp/open.txt\n' > "$out"
+"#,
+        );
+        let mut config = test_config();
+        config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+        config.filechooser.chooser = "chooser --chooser-file".into();
+        let chooser = FileChooser::new(config);
+
+        let (code, result) = chooser.open_file_result("Open", HashMap::new());
+        assert_eq!(code, 0);
+        assert!(result.contains_key("uris"));
+
+        let mut config = test_config();
+        config.filechooser.terminal = "true".into();
+        let chooser = FileChooser::new(config);
+        let (code, result) = chooser.open_file_result("Open", HashMap::new());
+        assert_eq!(code, 1);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn save_file_result_uses_portal_options_or_cancel_code() {
+        let terminal = executable_script(
+            "terminal",
+            r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --cwd-file=*) cwd="${arg#--cwd-file=}" ;;
+    esac
+done
+printf '/tmp\n' > "$cwd"
+"#,
+        );
+        let mut config = test_config();
+        config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+        config.filechooser.chooser = "chooser --chooser-file".into();
+        let chooser = FileChooser::new(config);
+        let mut options = HashMap::new();
+        options.insert(
+            "current_name".into(),
+            owned_value(Value::Str("saved.txt".into())),
+        );
+
+        let (code, result) = chooser.save_file_result("Save", options);
+        assert_eq!(code, 0);
+        assert!(result.contains_key("uris"));
+
+        let mut config = test_config();
+        config.filechooser.terminal = "true".into();
+        let chooser = FileChooser::new(config);
+        let (code, result) = chooser.save_file_result("Save", HashMap::new());
+        assert_eq!(code, 1);
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn build_uris_result_contains_string_array() {
         let result = build_uris_result(vec![
             "file:///tmp/a.txt".into(),
@@ -484,18 +645,21 @@ mod tests {
         )
         .unwrap();
 
-        let config = load_config(Some(tmp.path().to_path_buf()));
+        let config = runtime::load_config(Some(tmp.path().to_path_buf()));
 
         assert_eq!(config.filechooser.terminal, "foot --title");
         assert_eq!(config.filechooser.chooser, "ranger --choosefile");
         assert_eq!(config.filechooser.default_dir, "/tmp");
 
-        let missing = load_config(Some(tmp.path().with_extension("missing")));
+        let missing = runtime::load_config(Some(tmp.path().with_extension("missing")));
         assert_eq!(missing.filechooser.chooser, default_chooser());
 
         std::fs::write(tmp.path(), "[filechooser").unwrap();
-        let invalid = load_config(Some(tmp.path().to_path_buf()));
+        let invalid = runtime::load_config(Some(tmp.path().to_path_buf()));
         assert_eq!(invalid.filechooser.chooser, default_chooser());
+
+        let read_error = runtime::load_config(Some(std::env::temp_dir()));
+        assert_eq!(read_error.filechooser.chooser, default_chooser());
     }
 
     #[test]
@@ -531,153 +695,22 @@ mod tests {
 
         assert_eq!(selections, vec!["/home/osso/Documents/example.txt"]);
     }
-}
 
-#[interface(name = "org.freedesktop.impl.portal.FileChooser")]
-impl FileChooser {
-    async fn open_file(
-        &self,
-        #[zbus(signal_emitter)] _emitter: SignalEmitter<'_>,
-        handle: zbus::zvariant::ObjectPath<'_>,
-        app_id: &str,
-        _parent_window: &str,
-        title: &str,
-        options: HashMap<String, OwnedValue>,
-    ) -> (u32, HashMap<String, OwnedValue>) {
-        info!(
-            "OpenFile: handle={}, app_id={}, title={}",
-            handle, app_id, title
-        );
-        debug!("Options: {:?}", options);
+    #[test]
+    fn save_without_name_or_current_file_returns_selected_directory() {
+        let chooser = FileChooser::new(test_config());
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let dir_path = format!("{}.dir", tmp.path().display());
+        std::fs::write(&dir_path, "/home/osso/Documents\n").unwrap();
 
-        let multiple = get_bool_option(&options, "multiple");
-        let directory = get_bool_option(&options, "directory");
-        let current_folder = get_bytes_option(&options, "current_folder");
+        let selections =
+            chooser.read_selections(&tmp.path().to_string_lossy(), true, None, None, "/tmp");
 
-        match self.run_chooser(
-            title,
-            current_folder.as_deref(),
-            false,
-            directory,
-            multiple,
-            None,
-            None,
-        ) {
-            Ok(uris) => {
-                info!("Selected {} file(s)", uris.len());
-                (0, build_uris_result(uris))
-            }
-            Err(e) => {
-                warn!("OpenFile cancelled or failed: {}", e);
-                (1, HashMap::new())
-            }
-        }
-    }
-
-    async fn save_file(
-        &self,
-        #[zbus(signal_emitter)] _emitter: SignalEmitter<'_>,
-        handle: zbus::zvariant::ObjectPath<'_>,
-        app_id: &str,
-        _parent_window: &str,
-        title: &str,
-        options: HashMap<String, OwnedValue>,
-    ) -> (u32, HashMap<String, OwnedValue>) {
-        info!(
-            "SaveFile: handle={}, app_id={}, title={}",
-            handle, app_id, title
-        );
-        debug!("Options: {:?}", options);
-
-        let current_folder = get_bytes_option(&options, "current_folder");
-        let current_name = get_string_option(&options, "current_name");
-        let current_file = get_bytes_option(&options, "current_file");
-
-        match self.run_chooser(
-            title,
-            current_folder.as_deref(),
-            true,
-            false,
-            false,
-            current_name.as_deref(),
-            current_file.as_deref(),
-        ) {
-            Ok(uris) => {
-                info!("Save location: {:?}", uris);
-                (0, build_uris_result(uris))
-            }
-            Err(e) => {
-                warn!("SaveFile cancelled or failed: {}", e);
-                (1, HashMap::new())
-            }
-        }
+        assert_eq!(selections, vec!["/home/osso/Documents"]);
     }
 }
 
-fn load_config(path: Option<PathBuf>) -> Config {
-    let config_path = path.or_else(|| {
-        dirs::config_dir().map(|d| d.join("xdg-desktop-portal-termfilechooser/config.toml"))
-    });
-
-    let Some(path) = config_path else {
-        info!("Using default config");
-        return Config::default();
-    };
-
-    if !path.exists() {
-        info!("Using default config");
-        return Config::default();
-    }
-
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(e) => {
-            warn!("Failed to read config: {}", e);
-            info!("Using default config");
-            return Config::default();
-        }
-    };
-
-    match toml::from_str(&content) {
-        Ok(config) => {
-            info!("Loaded config from {:?}", path);
-            config
-        }
-        Err(e) => {
-            warn!("Failed to parse config: {}", e);
-            info!("Using default config");
-            Config::default()
-        }
-    }
-}
-
+#[cfg(not(test))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-
-    // Set up logging
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&args.loglevel));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
-
-    let config = load_config(args.config);
-    debug!("Config: {:?}", config);
-
-    let filechooser = FileChooser::new(config);
-
-    // Use zbus's built-in async runtime
-    zbus::block_on(async {
-        let _conn = connection::Builder::session()?
-            .name("org.freedesktop.impl.portal.desktop.termfilechooser")?
-            .serve_at("/org/freedesktop/portal/desktop", filechooser)?
-            .build()
-            .await?;
-
-        info!("Service registered on D-Bus");
-
-        // Wait forever
-        std::future::pending::<()>().await;
-        Ok::<(), zbus::Error>(())
-    })?;
-
-    Ok(())
+    runtime::run(Args::parse())
 }
