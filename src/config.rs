@@ -23,9 +23,10 @@ pub(super) fn default_chooser() -> String {
 }
 
 fn default_dir() -> String {
-    dirs::home_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".into())
+    match dirs::home_dir() {
+        Some(path) => path.to_string_lossy().into_owned(),
+        None => "/".into(),
+    }
 }
 
 impl Default for FileChooserConfig {

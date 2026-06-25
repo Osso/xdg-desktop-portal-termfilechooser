@@ -43,9 +43,7 @@ impl FileChooser {
 }
 
 pub(super) fn load_config(path: Option<PathBuf>) -> Config {
-    let config_path = path.or_else(|| {
-        dirs::config_dir().map(|d| d.join("xdg-desktop-portal-termfilechooser/config.toml"))
-    });
+    let config_path = path.or_else(default_config_path);
 
     let Some(path) = config_path else {
         info!("Using default config");
@@ -79,7 +77,11 @@ pub(super) fn load_config(path: Option<PathBuf>) -> Config {
     }
 }
 
-#[cfg(not(test))]
+pub(super) fn default_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("xdg-desktop-portal-termfilechooser/config.toml"))
+}
+
+#[cfg(all(not(test), not(coverage)))]
 pub(super) fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&args.loglevel));

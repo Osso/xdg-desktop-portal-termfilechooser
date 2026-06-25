@@ -633,6 +633,12 @@ printf '/tmp\n' > "$cwd"
 
     #[test]
     fn load_config_reads_toml_and_falls_back_for_missing_or_invalid_files() {
+        assert!(
+            runtime::default_config_path()
+                .map(|path| path.ends_with("xdg-desktop-portal-termfilechooser/config.toml"))
+                .unwrap_or(true)
+        );
+
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(
             tmp.path(),
@@ -710,7 +716,7 @@ printf '/tmp\n' > "$cwd"
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(coverage)))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime::run(Args::parse())
 }
