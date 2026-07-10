@@ -223,11 +223,10 @@ impl FileChooser {
         request: ChooserRequest<'_>,
         cancellation: CancellationToken,
     ) -> Result<Vec<String>, String> {
-        self.run_chooser_paths_with_cancellation(request, cancellation)
-            .await?
-            .iter()
-            .map(|path| path_to_file_uri(path))
-            .collect()
+        let paths = self
+            .run_chooser_paths_with_cancellation(request, cancellation)
+            .await?;
+        paths_to_file_uris(&paths)
     }
 
     #[cfg(test)]
@@ -242,15 +241,22 @@ impl FileChooser {
         cancellation: CancellationToken,
     ) -> (u32, HashMap<String, OwnedValue>) {
         let current_folder = get_bytes_option(&options, "current_folder");
+        let directory = get_bool_option(&options, "directory");
         let request = ChooserRequest {
             title,
             start_path: current_folder.as_deref(),
             multiple: get_bool_option(&options, "multiple"),
         };
-        match self
-            .run_chooser_with_cancellation(request, cancellation)
+        let result = self
+            .run_chooser_paths_with_cancellation(request, cancellation)
             .await
-        {
+            .and_then(|paths| {
+                if directory {
+                    validate_directory_selections(&paths)?;
+                }
+                paths_to_file_uris(&paths)
+            });
+        match result {
             Ok(uris) => {
                 info!("Selected {} file(s)", uris.len());
                 (0, build_uris_result(uris))
@@ -433,6 +439,20 @@ fn validate_selections(selections: &[PathBuf], multiple: bool) -> Result<(), Str
         ));
     }
     Ok(())
+}
+
+fn validate_directory_selections(selections: &[PathBuf]) -> Result<(), String> {
+    if let Some(file) = selections.iter().find(|path| !path.is_dir()) {
+        return Err(format!(
+            "Chooser returned a non-directory path: {}",
+            file.to_string_lossy()
+        ));
+    }
+    Ok(())
+}
+
+fn paths_to_file_uris(paths: &[PathBuf]) -> Result<Vec<String>, String> {
+    paths.iter().map(|path| path_to_file_uri(path)).collect()
 }
 
 fn save_files_success_result(

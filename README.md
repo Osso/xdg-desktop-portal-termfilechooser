@@ -20,7 +20,7 @@ The installed executable is `/usr/bin/xdg-desktop-portal-termfilechooser`. The p
 
 | Method | Behavior |
 | --- | --- |
-| `OpenFile` | Uses `current_folder` when supplied; otherwise uses `default_dir`. `multiple=true` permits multiple output paths; otherwise exactly one absolute path is required. |
+| `OpenFile` | Uses `current_folder` when supplied; otherwise uses `default_dir`. `multiple=true` permits multiple output paths; otherwise exactly one absolute path is required. With `directory=true`, every explicit chooser output must be an existing directory; file paths are rejected. |
 | `SaveFile` | Uses `current_folder`, or the parent directory of `current_file`, as the start directory. The explicitly selected path is returned. |
 | `SaveFiles` | Requires the `files` byte-array option. The chooser must explicitly return one existing directory. Each safe plain filename is appended to that directory and returned. |
 

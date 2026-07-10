@@ -405,6 +405,55 @@ printf '%s/report.txt\n' "$start" > "$out"
 }
 
 #[test]
+fn open_file_directory_option_accepts_only_directories() {
+    let selected_directory = tempfile::tempdir().unwrap();
+    let selected_file = tempfile::NamedTempFile::new().unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --chooser-file=*) out="${{arg#--chooser-file=}}" ;;
+    esac
+done
+printf '{}\n' > "$out"
+"#,
+        selected_file.path().display()
+    );
+    let terminal = executable_script("terminal", &script);
+    let mut config = test_config();
+    config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+    config.filechooser.chooser = "chooser --chooser-file".into();
+    let chooser = FileChooser::new(config);
+    let mut options = HashMap::new();
+    options.insert("directory".into(), owned_value(Value::Bool(true)));
+
+    let (file_code, file_result) = chooser.open_file_result("Open directory", options.clone());
+    assert_eq!(file_code, 2);
+    assert!(file_result.is_empty());
+
+    let script = format!(
+        r#"#!/bin/sh
+for arg in "$@"; do
+    case "$arg" in
+        --chooser-file=*) out="${{arg#--chooser-file=}}" ;;
+    esac
+done
+printf '{}\n' > "$out"
+"#,
+        selected_directory.path().display()
+    );
+    let terminal = executable_script("terminal", &script);
+    let mut config = test_config();
+    config.filechooser.terminal = terminal.to_string_lossy().into_owned();
+    config.filechooser.chooser = "chooser --chooser-file".into();
+    let chooser = FileChooser::new(config);
+
+    let (directory_code, directory_result) = chooser.open_file_result("Open directory", options);
+    assert_eq!(directory_code, 0);
+    assert!(directory_result.contains_key("uris"));
+}
+
+#[test]
 fn open_file_result_returns_uris_or_cancel_code() {
     let terminal = executable_script(
         "terminal",

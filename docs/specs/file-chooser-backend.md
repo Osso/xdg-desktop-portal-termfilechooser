@@ -14,7 +14,7 @@ The FileChooser backend in `src/main.rs` and `src/runtime.rs` must provide termi
 
 ### Selection semantics
 
-- [x] For `OpenFile`, accept one absolute path by default and permit multiple absolute paths only when `multiple=true`.
+- [x] For `OpenFile`, accept one absolute path by default, permit multiple absolute paths only when `multiple=true`, and require existing directories when `directory=true`.
 - [x] For `SaveFile`, start from `current_folder` when available, otherwise the parent of `current_file`, and return only the explicitly chosen output path.
 - [x] For `SaveFiles`, require a valid `files` option, require a selected existing directory, and return that directory joined to each safe plain filename.
 - [x] Reject empty, relative, and invalid-count chooser output instead of returning it to the portal caller.
@@ -49,7 +49,7 @@ The FileChooser backend in `src/main.rs` and `src/runtime.rs` must provide termi
 - `run-tests.sh` — executes formatter, Clippy with warnings denied, and the repository test suite under `all`; `unit` accepts a Cargo test filter.
 - `.github/workflows/ci.yml` — runs formatting, Clippy, and tests in GitHub Actions.
 
-Fresh verification on this cycle: `./run-tests.sh all` completed successfully with formatting clean, Clippy warnings denied, and 39 tests passed.
+Fresh verification on this cycle: `./run-tests.sh all` completed successfully with formatting clean, Clippy warnings denied, and 40 tests passed.
 
 ## Known gaps (current cycle)
 
