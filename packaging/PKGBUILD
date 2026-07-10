@@ -11,7 +11,7 @@ optdepends=(
     'kitty: default terminal command'
     'yazi: default file chooser command'
 )
-source=("$pkgname::git+file://$startdir/..")
+source=("$pkgname::git+https://github.com/Osso/xdg-desktop-portal-termfilechooser.git#branch=master")
 sha256sums=('SKIP')
 
 build() {

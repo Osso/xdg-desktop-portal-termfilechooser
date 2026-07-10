@@ -92,11 +92,11 @@ Other policy sections, keys, values, and ordering are retained. The command fail
 
 ## Install and deploy
 
-`packaging/PKGBUILD` clones the clean, committed local checkout into an isolated makepkg source directory, builds the release binary with Cargo, runs Cargo tests in `check()`, and packages the executable, portal descriptor, D-Bus service file, and this README. Runtime dependencies are `gcc-libs` and `xdg-desktop-portal>=1.17.1`; the minimum portal version provides modern `portals.conf` selection, so the deprecated `UseIn` fallback is intentionally absent. `kitty` and `yazi` are optional because they are only the default configured commands.
+`packaging/PKGBUILD` clones the pushed `master` branch from GitHub into makepkg's isolated source directory, builds the release binary with Cargo, runs Cargo tests in `check()`, and packages the executable, portal descriptor, D-Bus service file, and this README. `deploy.sh` refuses dirty checkouts or a local HEAD that differs from `origin/master`, ensuring the sandboxed build matches the verified local commit. Runtime dependencies are `gcc-libs` and `xdg-desktop-portal>=1.17.1`; the minimum portal version provides modern `portals.conf` selection, so the deprecated `UseIn` fallback is intentionally absent. `kitty` and `yazi` are optional because they are only the default configured commands.
 
 Run `./deploy.sh` from this repository to:
 
-1. refuse a dirty checkout, then install `packaging/PKGBUILD` through `authsudo arch install`;
+1. refuse a dirty checkout or a HEAD differing from `origin/master`, then install `packaging/PKGBUILD` through `authsudo arch install`;
 2. run `/usr/bin/xdg-desktop-portal-termfilechooser --configure-portal`;
 3. stop a running installed backend; and
 4. restart `xdg-desktop-portal.service` for the user.

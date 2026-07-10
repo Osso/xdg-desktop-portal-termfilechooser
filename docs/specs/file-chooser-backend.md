@@ -39,7 +39,7 @@ The FileChooser backend in `src/main.rs` and `src/runtime.rs` must provide termi
 - `src/portal_config.rs` — policy source selection and a policy-preserving FileChooser preference rewrite.
 - `termfilechooser.portal` — portal descriptor advertising the FileChooser interface.
 - `org.freedesktop.impl.portal.desktop.termfilechooser.service` — D-Bus activation for the installed backend.
-- `packaging/PKGBUILD` — isolated committed-checkout build, check, package installation, and an `xdg-desktop-portal>=1.17.1` dependency for modern policy selection without deprecated `UseIn` fallback.
+- `packaging/PKGBUILD` — sandbox-compatible pushed-`master` build, check, package installation, and an `xdg-desktop-portal>=1.17.1` dependency for modern policy selection without deprecated `UseIn` fallback.
 - `deploy.sh` — local package install, portal policy selection, backend stop, and user portal restart.
 - `run-tests.sh` — formatting, lint, and test command runner.
 

@@ -9,6 +9,14 @@ if [[ -n $(git -C "$repo_dir" status --porcelain) ]]; then
     exit 1
 fi
 
+git -C "$repo_dir" fetch origin master
+local_head=$(git -C "$repo_dir" rev-parse HEAD)
+remote_head=$(git -C "$repo_dir" rev-parse origin/master)
+if [[ "$local_head" != "$remote_head" ]]; then
+    echo "Refusing to package: local HEAD does not match origin/master." >&2
+    exit 1
+fi
+
 authsudo arch install "$repo_dir/packaging"
 "/usr/bin/$pkgname" --configure-portal
 
