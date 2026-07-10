@@ -1,3 +1,4 @@
 /src/
 /pkg/
+/xdg-desktop-portal-termfilechooser/
 *.pkg.tar.zst
