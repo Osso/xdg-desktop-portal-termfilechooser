@@ -1,21 +1,18 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")"
-
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 pkgname=xdg-desktop-portal-termfilechooser
 
-if pacman -Q "$pkgname" >/dev/null 2>&1; then
-    authsudo pacman -R --noconfirm "$pkgname"
+if [[ -n $(git -C "$repo_dir" status --porcelain) ]]; then
+    echo "Refusing to package an uncommitted checkout." >&2
+    exit 1
 fi
 
-authsudo cargo install --path . --locked --force --root /usr
-authsudo install -Dm644 termfilechooser.portal /usr/share/xdg-desktop-portal/portals/termfilechooser.portal
-authsudo install -Dm644 \
-    org.freedesktop.impl.portal.desktop.termfilechooser.service \
-    /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.termfilechooser.service
+authsudo arch install "$repo_dir/packaging"
+"/usr/bin/$pkgname" --configure-portal
 
-# Kill the running instance — D-Bus will auto-restart it on next use
-pkill -x xdg-desktop-portal-termfilechooser 2>/dev/null || true
+pkill -f "^/usr/bin/$pkgname( |$)" 2>/dev/null || true
+systemctl --user restart xdg-desktop-portal.service
 
-echo "Deployed. Service will restart on next file dialog."
+echo "Deployed package and selected termfilechooser for FileChooser."

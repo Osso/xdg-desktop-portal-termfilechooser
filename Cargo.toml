@@ -17,6 +17,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
 percent-encoding = "2"
 tempfile = "3"
+shlex = "1"
+async-channel = "2"
+rustix = { version = "1", features = ["process"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }

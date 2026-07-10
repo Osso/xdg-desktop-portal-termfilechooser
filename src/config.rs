@@ -1,4 +1,7 @@
-#[derive(Debug, Clone, serde::Deserialize)]
+use std::ffi::OsString;
+use std::path::Path;
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub(super) struct Config {
     #[serde(default)]
     pub(super) filechooser: FileChooserConfig,
@@ -39,10 +42,22 @@ impl Default for FileChooserConfig {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            filechooser: FileChooserConfig::default(),
+impl Config {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        parse_command(&self.filechooser.terminal, "Terminal")?;
+        parse_command(&self.filechooser.chooser, "Chooser")?;
+        if !Path::new(&self.filechooser.default_dir).is_absolute() {
+            return Err("Default directory must be an absolute path".into());
         }
+        Ok(())
     }
+}
+
+pub(super) fn parse_command(command: &str, label: &str) -> Result<Vec<OsString>, String> {
+    let parts =
+        shlex::split(command).ok_or_else(|| format!("{label} command has invalid quoting"))?;
+    if parts.is_empty() {
+        return Err(format!("{label} command cannot be empty"));
+    }
+    Ok(parts.into_iter().map(OsString::from).collect())
 }
