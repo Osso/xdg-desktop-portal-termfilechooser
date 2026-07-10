@@ -33,6 +33,33 @@ fn adds_missing_preferred_section_key() {
 }
 
 #[test]
+fn insertion_adds_newline_after_unterminated_preferred_section() {
+    assert_eq!(
+        portal_config::set_filechooser_backend("[preferred]"),
+        "[preferred]\norg.freedesktop.impl.portal.FileChooser=termfilechooser\n"
+    );
+    assert_eq!(
+        portal_config::set_filechooser_backend("[preferred]\ndefault=gtk"),
+        "[preferred]\ndefault=gtk\norg.freedesktop.impl.portal.FileChooser=termfilechooser\n"
+    );
+}
+
+#[test]
+fn empty_xdg_path_list_uses_spec_default() {
+    assert_eq!(
+        portal_config::parse_xdg_paths(Some(std::ffi::OsStr::new("")), "/etc/xdg"),
+        vec![PathBuf::from("/etc/xdg")]
+    );
+    assert_eq!(
+        portal_config::parse_xdg_paths(None, "/usr/local/share:/usr/share"),
+        vec![
+            PathBuf::from("/usr/local/share"),
+            PathBuf::from("/usr/share")
+        ]
+    );
+}
+
+#[test]
 fn source_follows_directory_then_desktop_then_generic_precedence() {
     let root = tempfile::tempdir().unwrap();
     let high_priority = root.path().join("high");

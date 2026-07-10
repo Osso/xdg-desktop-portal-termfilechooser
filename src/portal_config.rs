@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ffi::OsStr;
 #[cfg(not(test))]
 use std::io::Write;
 #[cfg(not(test))]
@@ -10,13 +11,6 @@ const BACKEND_NAME: &str = "termfilechooser";
 
 pub(super) fn set_filechooser_backend(content: &str) -> String {
     let mut lines: Vec<String> = content.split_inclusive('\n').map(String::from).collect();
-    if !content.is_empty() && !content.ends_with('\n') {
-        let final_line = content.rsplit_once('\n').map_or(content, |(_, line)| line);
-        if lines.last().is_some_and(|line| line == final_line) {
-            lines.pop();
-            lines.push(final_line.to_string());
-        }
-    }
 
     let Some(section_start) = lines.iter().position(|line| line.trim() == "[preferred]") else {
         if !content.is_empty() && !content.ends_with('\n') {
@@ -52,6 +46,9 @@ pub(super) fn set_filechooser_backend(content: &str) -> String {
     let mut insertion = section_end;
     while insertion > section_start + 1 && lines[insertion - 1].trim().is_empty() {
         insertion -= 1;
+    }
+    if insertion > 0 && !lines[insertion - 1].ends_with('\n') {
+        lines[insertion - 1].push('\n');
     }
     lines.insert(insertion, preference_line());
     lines.concat()
@@ -194,8 +191,15 @@ fn policy_directories_from_environment() -> Result<Vec<PathBuf>, String> {
 
 #[cfg(not(test))]
 fn split_xdg_paths(variable: &str, default: &str) -> Vec<PathBuf> {
-    let value = std::env::var_os(variable).unwrap_or_else(|| default.into());
-    std::env::split_paths(&value).collect()
+    let value = std::env::var_os(variable);
+    parse_xdg_paths(value.as_deref(), default)
+}
+
+pub(super) fn parse_xdg_paths(value: Option<&OsStr>, default: &str) -> Vec<PathBuf> {
+    let paths = value
+        .filter(|paths| !paths.is_empty())
+        .unwrap_or_else(|| OsStr::new(default));
+    std::env::split_paths(paths).collect()
 }
 
 #[cfg(not(test))]
