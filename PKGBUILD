@@ -6,26 +6,26 @@ arch=('x86_64')
 url='https://github.com/Osso/xdg-desktop-portal-termfilechooser'
 license=('LicenseRef-Unknown')
 depends=('gcc-libs' 'xdg-desktop-portal>=1.17.1')
-makedepends=('cargo' 'git')
+makedepends=('cargo')
 optdepends=(
     'kitty: default terminal command'
     'yazi: default file chooser command'
 )
-source=("$pkgname::git+https://github.com/Osso/xdg-desktop-portal-termfilechooser.git#branch=master")
-sha256sums=('SKIP')
+source=()
+sha256sums=()
 
 build() {
-    cd "$srcdir/$pkgname"
-    cargo build --release --locked
+    cd "$startdir"
+    cargo build --release --locked --offline
 }
 
 check() {
-    cd "$srcdir/$pkgname"
-    cargo test --all-targets --all-features --locked
+    cd "$startdir"
+    cargo test --all-targets --all-features --locked --offline
 }
 
 package() {
-    cd "$srcdir/$pkgname"
+    cd "$startdir"
     install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
     install -Dm644 termfilechooser.portal \
         "$pkgdir/usr/share/xdg-desktop-portal/portals/termfilechooser.portal"
