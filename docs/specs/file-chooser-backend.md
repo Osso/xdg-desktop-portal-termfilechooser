@@ -25,7 +25,7 @@ The FileChooser backend in `src/main.rs` and `src/runtime.rs` must provide termi
 - [x] Load the default TOML config from `$XDG_CONFIG_HOME/xdg-desktop-portal-termfilechooser/config.toml` when present, use defaults when that implicit file is absent, and reject invalid explicitly requested config files.
 - [x] Parse quoted terminal and chooser command strings into argument vectors without shell execution, rejecting empty or malformed commands and a nonabsolute `default_dir`.
 - [x] Support `--replace` for D-Bus name replacement without changing portal-policy preferences.
-- [x] Support `--configure-portal` by changing only the FileChooser key in the selected existing portal policy and preserving the other policy content.
+- [x] Support `--configure-portal` by matching xdg-desktop-portal's XDG directory and desktop-token precedence, changing only the FileChooser key in the selected existing policy, and preserving the other policy content.
 
 ## How it works
 
@@ -39,7 +39,7 @@ The FileChooser backend in `src/main.rs` and `src/runtime.rs` must provide termi
 - `src/portal_config.rs` — policy source selection and a policy-preserving FileChooser preference rewrite.
 - `termfilechooser.portal` — portal descriptor advertising the FileChooser interface.
 - `org.freedesktop.impl.portal.desktop.termfilechooser.service` — D-Bus activation for the installed backend.
-- `packaging/PKGBUILD` — isolated committed-checkout build, check, package installation, and declared runtime/optional dependencies.
+- `packaging/PKGBUILD` — isolated committed-checkout build, check, package installation, and an `xdg-desktop-portal>=1.17.1` dependency for modern policy selection without deprecated `UseIn` fallback.
 - `deploy.sh` — local package install, portal policy selection, backend stop, and user portal restart.
 - `run-tests.sh` — formatting, lint, and test command runner.
 

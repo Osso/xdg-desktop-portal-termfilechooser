@@ -159,9 +159,7 @@ impl FileChooser {
     ) -> Result<RunningTerminal, String> {
         let mut command = self.build_terminal_command(title, chooser_args)?;
         debug!("Running: {:?}", command);
-        let child = command
-            .spawn()
-            .map_err(|error| format!("Failed to spawn terminal: {error}"))?;
+        let child = spawn_terminal_process(&mut command)?;
         Ok(spawn_terminal_worker(child, cancellation))
     }
 
@@ -363,6 +361,25 @@ impl FileChooser {
             CancellationToken::new(),
         ))
     }
+}
+
+fn spawn_terminal_process(command: &mut Command) -> Result<Child, String> {
+    const MAX_ATTEMPTS: usize = 3;
+    for attempt in 1..=MAX_ATTEMPTS {
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) if is_retryable_spawn_error(&error) && attempt < MAX_ATTEMPTS => {
+                debug!("Retrying terminal spawn after transient error: {}", error);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => return Err(format!("Failed to spawn terminal: {error}")),
+        }
+    }
+    unreachable!("spawn loop returns on every final attempt")
+}
+
+fn is_retryable_spawn_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::Interrupted || error.raw_os_error() == Some(26)
 }
 
 fn spawn_terminal_worker(child: Child, cancellation: CancellationToken) -> RunningTerminal {

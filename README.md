@@ -73,14 +73,16 @@ The TOML strings are parsed with shell-style quoting, not executed through a she
 - `--replace`: allows D-Bus name replacement and asks the session bus to replace an existing backend owner. It does not alter portal policy.
 - `--configure-portal`: updates the active desktop's portal-policy preference, prints the updated policy path, and exits without starting the D-Bus service.
 
-`--configure-portal` reads the first existing policy in this order:
+`--configure-portal` follows xdg-desktop-portal's policy lookup order. If `XDG_DESKTOP_PORTAL_DIR` is set, only that override directory is searched. Otherwise it searches these locations in order:
 
-1. `$XDG_CONFIG_HOME/xdg-desktop-portal/$XDG_CURRENT_DESKTOP-portals.conf`
-2. `$XDG_CONFIG_HOME/xdg-desktop-portal/portals.conf`
-3. `$XDG_DATA_DIRS/xdg-desktop-portal/$XDG_CURRENT_DESKTOP-portals.conf`
-4. `$XDG_DATA_DIRS/xdg-desktop-portal/portals.conf`
+1. `$XDG_CONFIG_HOME/xdg-desktop-portal`
+2. each `$XDG_CONFIG_DIRS/xdg-desktop-portal` directory
+3. `/etc/xdg-desktop-portal`
+4. `$XDG_DATA_HOME/xdg-desktop-portal`
+5. each `$XDG_DATA_DIRS/xdg-desktop-portal` directory
+6. `/usr/share/xdg-desktop-portal`
 
-The first nonempty colon-separated `XDG_CURRENT_DESKTOP` value is used lowercased. A user policy is edited in place. A system policy is copied to `$XDG_CONFIG_HOME/xdg-desktop-portal/$XDG_CURRENT_DESKTOP-portals.conf` and edited there. The operation changes or adds only this line under `[preferred]`:
+Within each directory, every nonempty colon-separated `XDG_CURRENT_DESKTOP` token is tried in order, lowercased, as `DESKTOP-portals.conf`; then `portals.conf` is tried. A policy under `$XDG_CONFIG_HOME` is edited in place. A lower-priority policy is copied to `$XDG_CONFIG_HOME/xdg-desktop-portal/FIRST-DESKTOP-portals.conf` and edited there. The operation changes or adds only this line under `[preferred]`:
 
 ```ini
 org.freedesktop.impl.portal.FileChooser=termfilechooser
@@ -90,7 +92,7 @@ Other policy sections, keys, values, and ordering are retained. The command fail
 
 ## Install and deploy
 
-`packaging/PKGBUILD` clones the clean, committed local checkout into an isolated makepkg source directory, builds the release binary with Cargo, runs Cargo tests in `check()`, and packages the executable, portal descriptor, D-Bus service file, and this README. Runtime dependencies are `gcc-libs` and `xdg-desktop-portal`; `kitty` and `yazi` are optional because they are only the default configured commands.
+`packaging/PKGBUILD` clones the clean, committed local checkout into an isolated makepkg source directory, builds the release binary with Cargo, runs Cargo tests in `check()`, and packages the executable, portal descriptor, D-Bus service file, and this README. Runtime dependencies are `gcc-libs` and `xdg-desktop-portal>=1.17.1`; the minimum portal version provides modern `portals.conf` selection, so the deprecated `UseIn` fallback is intentionally absent. `kitty` and `yazi` are optional because they are only the default configured commands.
 
 Run `./deploy.sh` from this repository to:
 

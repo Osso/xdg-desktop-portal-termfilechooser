@@ -33,24 +33,74 @@ fn adds_missing_preferred_section_key() {
 }
 
 #[test]
-fn source_prefers_existing_user_policy_then_system_desktop_policy() {
+fn source_follows_directory_then_desktop_then_generic_precedence() {
     let root = tempfile::tempdir().unwrap();
-    let user = root.path().join("user");
-    let system = root.path().join("system");
-    std::fs::create_dir_all(&user).unwrap();
-    std::fs::create_dir_all(&system).unwrap();
-    let system_policy = system.join("niri-portals.conf");
-    std::fs::write(&system_policy, "[preferred]\ndefault=gtk\n").unwrap();
+    let high_priority = root.path().join("high");
+    let low_priority = root.path().join("low");
+    std::fs::create_dir_all(&high_priority).unwrap();
+    std::fs::create_dir_all(&low_priority).unwrap();
+    let high_generic = high_priority.join("portals.conf");
+    std::fs::write(&high_generic, "[preferred]\ndefault=gtk\n").unwrap();
+    std::fs::write(
+        low_priority.join("niri-portals.conf"),
+        "[preferred]\ndefault=gnome\n",
+    )
+    .unwrap();
 
-    assert_eq!(
-        portal_config::find_policy_source(&user, std::slice::from_ref(&system), "niri"),
-        Some(system_policy)
+    let source = portal_config::find_policy_source(
+        &[high_priority, low_priority],
+        &["niri".into(), "gnome".into()],
     );
 
-    let user_policy = user.join("portals.conf");
-    std::fs::write(&user_policy, "[preferred]\ndefault=gnome;gtk;\n").unwrap();
+    assert_eq!(source, Some(high_generic));
+}
+
+#[test]
+fn source_checks_every_desktop_token_in_order() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path();
+    let gnome_policy = directory.join("gnome-portals.conf");
+    std::fs::write(&gnome_policy, "[preferred]\ndefault=gnome\n").unwrap();
+    std::fs::write(directory.join("portals.conf"), "[preferred]\ndefault=gtk\n").unwrap();
+
+    let source = portal_config::find_policy_source(
+        &[directory.to_path_buf()],
+        &["niri".into(), "gnome".into()],
+    );
+
+    assert_eq!(source, Some(gnome_policy));
+}
+
+#[test]
+fn desktop_tokens_are_lowercased_and_empty_tokens_are_removed() {
     assert_eq!(
-        portal_config::find_policy_source(&user, &[system], "niri"),
-        Some(user_policy)
+        portal_config::parse_desktops("NIRI::GNOME:"),
+        vec!["niri", "gnome"]
+    );
+}
+
+#[test]
+fn policy_directories_follow_xdg_precedence() {
+    let directories = portal_config::build_policy_directories(
+        PathBuf::from("/user/config"),
+        vec![
+            PathBuf::from("/system/config-a"),
+            PathBuf::from("/system/config-b"),
+        ],
+        PathBuf::from("/user/data"),
+        vec![PathBuf::from("/system/data")],
+    );
+
+    assert_eq!(
+        directories,
+        vec![
+            PathBuf::from("/user/config/xdg-desktop-portal"),
+            PathBuf::from("/system/config-a/xdg-desktop-portal"),
+            PathBuf::from("/system/config-b/xdg-desktop-portal"),
+            PathBuf::from("/etc/xdg-desktop-portal"),
+            PathBuf::from("/user/data/xdg-desktop-portal"),
+            PathBuf::from("/system/data/xdg-desktop-portal"),
+            PathBuf::from("/usr/share/xdg-desktop-portal"),
+        ]
     );
 }

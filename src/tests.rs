@@ -101,6 +101,19 @@ fn chooser_args_preserve_quoted_arguments() {
 }
 
 #[test]
+fn terminal_spawn_retries_only_transient_errors() {
+    assert!(is_retryable_spawn_error(
+        &std::io::Error::from_raw_os_error(26)
+    ));
+    assert!(is_retryable_spawn_error(&std::io::Error::from(
+        std::io::ErrorKind::Interrupted,
+    )));
+    assert!(!is_retryable_spawn_error(&std::io::Error::from(
+        std::io::ErrorKind::NotFound,
+    )));
+}
+
+#[test]
 fn spawn_terminal_reports_success_and_failure_status() {
     let mut config = test_config();
     config.filechooser.terminal = "true".into();

@@ -5,7 +5,7 @@ pkgdesc='XDG Desktop Portal file chooser backend for terminal file managers'
 arch=('x86_64')
 url='https://github.com/Osso/xdg-desktop-portal-termfilechooser'
 license=('LicenseRef-Unknown')
-depends=('gcc-libs' 'xdg-desktop-portal')
+depends=('gcc-libs' 'xdg-desktop-portal>=1.17.1')
 makedepends=('cargo' 'git')
 optdepends=(
     'kitty: default terminal command'
